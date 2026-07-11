@@ -96,9 +96,7 @@ class AtspiAccessibilityBackend:
             atspi_module = Atspi
 
         self._atspi = atspi_module
-        self._wayland_session = (
-            is_wayland_session() if wayland_session is None else wayland_session
-        )
+        self._wayland_session = is_wayland_session() if wayland_session is None else wayland_session
         self._warned_wayland_frames: set[str] = set()
         init_result = atspi_module.init()
         if init_result != 0:
@@ -150,9 +148,7 @@ class AtspiAccessibilityBackend:
             component = frame.get_component_iface()
             if component is None:
                 return
-            extents = self._atspi.Component.get_extents(
-                component, self._atspi.CoordType.SCREEN
-            )
+            extents = self._atspi.Component.get_extents(component, self._atspi.CoordType.SCREEN)
             if extents.x != 0 or extents.y != 0:
                 return
             frame_name = str(frame.get_name() or "")

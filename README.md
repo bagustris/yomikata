@@ -97,11 +97,40 @@ GDK_BACKEND=x11 evince file.pdf
 GDK_BACKEND=x11 gedit notes.txt
 ```
 
-A shell alias makes this painless:
+A shell alias makes this painless for apps you launch from a terminal, but it
+won't cover apps launched from the dock, Activities search, or a file
+manager double-click. For those, set the backend for your whole GNOME
+session instead:
 
 ```bash
-alias evince='GDK_BACKEND=x11 evince'
+mkdir -p ~/.config/environment.d
+echo 'GDK_BACKEND=x11' >> ~/.config/environment.d/gdk-backend.conf
 ```
+
+`environment.d` is read by `systemd --user` when it starts your session, so
+this takes effect the next time you log in -- log out and back in (a full
+reboot isn't necessary). It applies to every GTK app you launch afterward,
+however you launch it. The trade-off is session-wide: all GTK apps run
+under XWayland, not just the ones you hover over, so you lose Wayland-only
+behavior (e.g. fractional scaling smoothness) everywhere, not just in your
+target app.
+
+In practice this can read as a general slowdown, not just a cosmetic loss:
+XWayland's compatibility layer adds overhead versus native Wayland, so GNOME
+Shell and every GTK app you launch -- not just target apps -- can feel less
+responsive for as long as the file is in place. Prefer the per-app alias
+above; reserve the session-wide `environment.d` file for active testing and
+remove it again afterward. There is no way to undo it without logging out
+again either: `environment.d` is only read when `systemd --user` (and
+therefore GNOME Shell) starts, so `systemctl --user unset-environment
+GDK_BACKEND` only affects processes spawned fresh via systemd from that
+point on -- it cannot retroactively change GNOME Shell's own environment or
+anything already forked from it.
+
+On Ubuntu 26.04+, GNOME dropped the "GNOME on Xorg" login option entirely
+-- Wayland is the only GNOME session available, so `environment.d` (or the
+per-app alias/env var above) is the only way to get a target app onto
+XWayland; there is no longer a full-Xorg-session escape hatch.
 
 YomiKata detects the situation for you: it logs an informational note at
 startup when it finds itself in a Wayland session, and logs a warning
