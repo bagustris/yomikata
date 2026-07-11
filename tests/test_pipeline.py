@@ -136,6 +136,48 @@ def test_falls_back_to_dictionary_form_for_inflected_verbs(tokenizer: SudachiTok
     assert "行く" in backend.lookup_calls  # then the dictionary form
 
 
+def test_conjugation_note_is_attached_for_an_inflected_verb(tokenizer: SudachiTokenizer) -> None:
+    text_info = AccessibleTextInfo(text="東京に行きました。", offset=3)
+    dictionary_backend = FakeDictionaryBackend(entries_by_headword={"行く": [GO_ENTRY]})
+    pipeline, _backend, popup = make_pipeline(tokenizer, text_info, dictionary_backend)
+
+    pipeline.on_hover(HoverEvent(x=1, y=1, timestamp=0.0))
+
+    assert popup.shown[0][2].conjugation_note == "continuative form of 行く"
+
+
+def test_conjugation_note_is_suppressed_when_the_surface_itself_is_a_headword(
+    tokenizer: SudachiTokenizer,
+) -> None:
+    # 行き is a real JMdict headword (the noun "bound for"); when the
+    # surface lookup succeeds, the entries describe the surface form, so a
+    # "form of 行く" note would mislabel them.
+    going_entry = DictionaryEntry(
+        entry_id=3,
+        kanji_forms=("行き",),
+        readings=("いき",),
+        senses=(Sense(parts_of_speech=("noun",), glosses=("bound for",)),),
+    )
+    text_info = AccessibleTextInfo(text="東京に行きました。", offset=3)
+    dictionary_backend = FakeDictionaryBackend(entries_by_headword={"行き": [going_entry]})
+    pipeline, _backend, popup = make_pipeline(tokenizer, text_info, dictionary_backend)
+
+    pipeline.on_hover(HoverEvent(x=1, y=1, timestamp=0.0))
+
+    assert popup.shown[0][2].entries == (going_entry,)
+    assert popup.shown[0][2].conjugation_note is None
+
+
+def test_conjugation_note_is_absent_for_an_uninflected_word(tokenizer: SudachiTokenizer) -> None:
+    text_info = AccessibleTextInfo(text="猫がいます。", offset=0)
+    dictionary_backend = FakeDictionaryBackend(entries_by_headword={"猫": [CAT_ENTRY]})
+    pipeline, _backend, popup = make_pipeline(tokenizer, text_info, dictionary_backend)
+
+    pipeline.on_hover(HoverEvent(x=0, y=0, timestamp=0.0))
+
+    assert popup.shown[0][2].conjugation_note is None
+
+
 def test_hides_popup_when_no_accessible_text(tokenizer: SudachiTokenizer) -> None:
     pipeline, _backend, popup = make_pipeline(tokenizer, accessible_text=None)
 

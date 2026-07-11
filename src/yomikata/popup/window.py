@@ -16,13 +16,16 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
 gi.require_version("GdkX11", "4.0")
-from gi.repository import GLib, Gtk  # noqa: E402
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 from Xlib import X  # noqa: E402
 from Xlib import display as xlib_display  # noqa: E402
 
@@ -34,7 +37,39 @@ _FADE_DURATION_MS = 150
 _FADE_STEP_MS = 16
 _CURSOR_OFFSET_X = 16
 _CURSOR_OFFSET_Y = 16
-_MAX_LAYOUT_WAIT_ITERATIONS = 50
+_STYLE_PATH = Path(__file__).resolve().parent / "style.css"
+
+#: Whether the popup stylesheet has been installed on the default display.
+#: The provider is display-global, so installing it once per process is
+#: both sufficient and necessary -- re-adding it on every PopupWindow
+#: construction would stack duplicate providers that are never removed.
+_css_installed = False
+
+
+def _ensure_css_installed() -> None:
+    """Install the popup stylesheet on the default display, once.
+
+    A missing or unparseable stylesheet is logged and skipped -- the popup
+    then renders unstyled rather than aborting startup, matching the
+    app-wide "degrade, never crash" contract.
+    """
+    global _css_installed
+    if _css_installed:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        logger.warning("No default display; popup styling will not be applied")
+        return
+    provider = Gtk.CssProvider()
+    try:
+        provider.load_from_path(str(_STYLE_PATH))
+    except GLib.Error:
+        logger.warning("Failed to load popup stylesheet from %s", _STYLE_PATH, exc_info=True)
+        return
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _css_installed = True
 
 
 def compute_popup_position(
@@ -95,6 +130,12 @@ class PopupWindow:
                 :func:`~yomikata.popup.renderer.render_popup_content`.
         """
         self._content_renderer = content_renderer
+
+        # Adw.init() loads libadwaita's stylesheet, which defines the named
+        # colors style.css references and re-resolves them whenever the
+        # system light/dark scheme changes.
+        Adw.init()
+        _ensure_css_installed()
 
         self._window = Gtk.Window()
         self._window.set_decorated(False)
@@ -157,13 +198,15 @@ class PopupWindow:
             )
 
     def _measure(self) -> tuple[int, int]:
-        context = GLib.MainContext.default()
-        for _ in range(_MAX_LAYOUT_WAIT_ITERATIONS):
-            width, height = self._window.get_width(), self._window.get_height()
-            if width > 0 and height > 0:
-                return width, height
-            context.iteration(False)
-        logger.debug("Popup size never became available; falling back to a default size")
+        # get_preferred_size needs no allocation, so the size is available
+        # synchronously -- iterating the main context here instead (waiting
+        # for get_width/get_height) would re-dispatch the hover-poll
+        # timeout and let a newer hover re-enter show_at, after which this
+        # frame's _move_to would drag the popup back to a stale position.
+        _minimum, natural = self._window.get_preferred_size()
+        if natural.width > 0 and natural.height > 0:
+            return natural.width, natural.height
+        logger.debug("Popup natural size unavailable; falling back to a default size")
         return 240, 120
 
     def _screen_size(self) -> tuple[int, int]:

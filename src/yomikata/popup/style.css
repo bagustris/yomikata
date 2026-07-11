@@ -1,0 +1,59 @@
+/* Popup styling. Colors come from libadwaita's named palette
+ * (@popover_bg_color, @window_fg_color), which libadwaita re-resolves
+ * whenever the system light/dark scheme changes -- so a single set of
+ * rules tracks the theme with no per-scheme duplication and no manual
+ * scheme tracking in window.py. Verified empirically on the live
+ * session: the resolved colors flip with Adw.StyleManager's color
+ * scheme on a plain Gtk.Window after Adw.init().
+ */
+
+.yomikata-popup {
+    background-color: @popover_bg_color;
+    color: @window_fg_color;
+    padding: 8px 10px;
+}
+
+.yomikata-popup-header {
+    font-size: 1.15em;
+    font-weight: bold;
+}
+
+.yomikata-popup-conjugation {
+    font-size: 0.9em;
+    font-style: italic;
+    opacity: 0.75;
+}
+
+.yomikata-popup-entry {
+    margin-top: 4px;
+}
+
+.yomikata-popup-sense-row {
+    margin-top: 2px;
+}
+
+.yomikata-popup-sense-number {
+    font-weight: bold;
+    opacity: 0.6;
+}
+
+.yomikata-popup-tag {
+    font-size: 0.85em;
+    padding: 0px 6px;
+    border-radius: 999px;
+    background-color: alpha(@window_fg_color, 0.12);
+}
+
+.yomikata-popup-gloss {
+    margin-top: 1px;
+}
+
+.yomikata-popup-kanji {
+    margin-top: 4px;
+    opacity: 0.9;
+}
+
+.yomikata-popup-empty {
+    font-style: italic;
+    opacity: 0.7;
+}

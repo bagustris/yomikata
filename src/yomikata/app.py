@@ -8,9 +8,11 @@ running HoverMonitor on its own thread would require.
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import signal
+import sys
 from pathlib import Path
 
 from gi.repository import GLib
@@ -22,6 +24,7 @@ from yomikata.hover.pointer_source import MODIFIER_MASKS, XlibModifierKeySource,
 from yomikata.pipeline import HoverPipeline
 from yomikata.popup.window import PopupWindow
 from yomikata.tokenizer.sudachi import SudachiTokenizer
+from yomikata.util.config import Settings, load_settings
 from yomikata.util.logging import configure_logging
 from yomikata.util.session import is_wayland_session
 
@@ -37,33 +40,45 @@ def _database_path() -> Path:
     return Path(override) if override else _DEFAULT_DATABASE_PATH
 
 
-def _hover_modifier_source() -> XlibModifierKeySource | None:
-    """Build the modifier key source configured via YOMIKATA_HOVER_MODIFIER.
+def _hover_modifier_source(settings: Settings) -> XlibModifierKeySource | None:
+    """Build the modifier key source for the given settings.
 
-    Accepts "ctrl", "alt", or "shift" (case-insensitive); defaults to
-    "ctrl" since polling the pointer system-wide (unlike a browser
-    extension scoped to one tab) would otherwise pop up over Japanese
-    text any time the pointer drifts near it during normal desktop use.
-    Set to "none" to require no modifier. An unrecognized value is logged
-    and treated as "ctrl".
+    The default of "ctrl" exists because polling the pointer system-wide
+    (unlike a browser extension scoped to one tab) would otherwise pop up
+    over Japanese text any time the pointer drifts near it during normal
+    desktop use. A setting of "none" requires no modifier.
+
+    Args:
+        settings: The effective settings (see
+            :func:`yomikata.util.config.load_settings`), whose
+            ``hover_modifier`` is guaranteed valid by that loader.
     """
-    name = os.environ.get("YOMIKATA_HOVER_MODIFIER", "ctrl").strip().lower()
-    if name == "none" or not name:
+    if settings.hover_modifier == "none":
         return None
-    mask = MODIFIER_MASKS.get(name)
-    if mask is None:
-        logger.warning(
-            "Unrecognized YOMIKATA_HOVER_MODIFIER=%r, falling back to ctrl. Valid values: %s, none",
-            name,
-            ", ".join(MODIFIER_MASKS),
-        )
-        mask = MODIFIER_MASKS["ctrl"]
-    return XlibModifierKeySource(mask)
+    return XlibModifierKeySource(MODIFIER_MASKS[settings.hover_modifier])
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="yomikata")
+    parser.add_argument(
+        "--settings",
+        action="store_true",
+        help="Open the settings window instead of starting the hover dictionary.",
+    )
+    return parser.parse_args(argv)
 
 
 def main() -> None:
     """Start the YomiKata application."""
     configure_logging()
+    args = _parse_args(sys.argv[1:])
+
+    if args.settings:
+        from yomikata.settings.window import run_settings_window
+
+        run_settings_window()
+        return
+
     logger.info("YomiKata starting up")
 
     if is_wayland_session():
@@ -84,12 +99,13 @@ def main() -> None:
         )
         return
 
+    settings = load_settings()
     accessibility_extractor = AccessibilityExtractor()
     tokenizer = SudachiTokenizer()
     dictionary_backend = SqliteDictionaryBackend(database_path)
     popup = PopupWindow()
     pointer_source = XlibPointerSource()
-    modifier_source = _hover_modifier_source()
+    modifier_source = _hover_modifier_source(settings)
 
     pipeline = HoverPipeline(
         accessibility_extractor=accessibility_extractor,

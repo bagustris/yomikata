@@ -17,6 +17,7 @@ from yomikata.hover.monitor import HoverEvent
 from yomikata.popup.renderer import PopupContent
 from yomikata.resolution.resolver import resolve_hovered_token
 from yomikata.sentence.extractor import extract_sentence
+from yomikata.tokenizer.conjugation import describe_conjugation
 from yomikata.tokenizer.sudachi import SudachiTokenizer
 
 logger = logging.getLogger(__name__)
@@ -103,9 +104,17 @@ class HoverPipeline:
             self._popup.hide()
             return
 
+        # Only describe the surface as a conjugation when the entries shown
+        # actually came from the dictionary-form fallback (or nothing was
+        # found at all). When the surface itself is a headword (e.g. 行き
+        # as the noun "bound for"), the entries describe the surface, and
+        # a "form of 行く" note would mislabel them.
         entries = self._dictionary_backend.lookup(token.surface)
-        if not entries and token.dictionary_form != token.surface:
-            entries = self._dictionary_backend.lookup(token.dictionary_form)
+        conjugation_note = None
+        if not entries:
+            conjugation_note = describe_conjugation(token)
+            if token.dictionary_form != token.surface:
+                entries = self._dictionary_backend.lookup(token.dictionary_form)
 
         kanji_entries = tuple(
             kanji_entry
@@ -118,5 +127,6 @@ class HoverPipeline:
             reading=token.reading,
             entries=tuple(entries),
             kanji=kanji_entries,
+            conjugation_note=conjugation_note,
         )
         self._popup.show_at(event.x, event.y, content)
