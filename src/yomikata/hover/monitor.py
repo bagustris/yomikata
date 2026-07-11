@@ -89,6 +89,7 @@ class SystemClock:
 
 
 HoverListener = Callable[[HoverEvent], None]
+HoverEndListener = Callable[[], None]
 
 
 class HoverMonitor:
@@ -120,7 +121,9 @@ class HoverMonitor:
         self._poll_interval_seconds = poll_interval_seconds
         self._modifier_source = modifier_source
         self._listeners: list[HoverListener] = []
+        self._end_listeners: list[HoverEndListener] = []
         self._running = False
+        self._modifier_was_active = True
 
     def add_listener(self, listener: HoverListener) -> None:
         """Register a callback to be invoked for each detected hover."""
@@ -130,13 +133,28 @@ class HoverMonitor:
         """Unregister a previously registered callback."""
         self._listeners.remove(listener)
 
+    def add_end_listener(self, listener: HoverEndListener) -> None:
+        """Register a callback invoked once when a held modifier is released.
+
+        Lets callers (e.g. hide a popup left showing) react to tracking
+        stopping, since no further :class:`HoverEvent` will be reported
+        until the modifier is held again. No-op when no modifier source
+        was configured, since hovering never stops in that case.
+        """
+        self._end_listeners.append(listener)
+
+    def remove_end_listener(self, listener: HoverEndListener) -> None:
+        """Unregister a previously registered end listener."""
+        self._end_listeners.remove(listener)
+
     def poll_once(self) -> HoverEvent | None:
         """Read the pointer position once and report a hover if settled.
 
         If a modifier source was configured and does not currently report
         the modifier as held, the debouncer is reset (so a stale dwell
         doesn't fire instantly once the modifier is next pressed) and no
-        hover is reported.
+        hover is reported. The first such poll after the modifier was held
+        also notifies end listeners, so a popup left showing gets hidden.
 
         Returns:
             The :class:`HoverEvent` that was reported to listeners, or None
@@ -144,7 +162,11 @@ class HoverMonitor:
         """
         if self._modifier_source is not None and not self._is_modifier_active():
             self._debouncer.reset()
+            if self._modifier_was_active:
+                self._modifier_was_active = False
+                self._notify_end()
             return None
+        self._modifier_was_active = True
 
         try:
             position = self._pointer_source.get_position()
@@ -193,3 +215,10 @@ class HoverMonitor:
                 listener(event)
             except Exception:
                 logger.warning("Hover listener raised an exception", exc_info=True)
+
+    def _notify_end(self) -> None:
+        for listener in self._end_listeners:
+            try:
+                listener()
+            except Exception:
+                logger.warning("Hover end listener raised an exception", exc_info=True)

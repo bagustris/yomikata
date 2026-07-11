@@ -6,6 +6,8 @@ YomiKata is inspired by the [10ten Japanese Reader](https://github.com/birchill/
 extension, but works with native desktop applications instead of a browser by reading accessible text
 through AT-SPI.
 
+![YomiKata popup showing a dictionary lookup over Japanese text](assets/screenshot_yomikata_v01.png)
+
 ## Status
 
 Early development. See [PLAN.md](PLAN.md) for the project roadmap and architecture.
@@ -148,13 +150,15 @@ of relying on the default `database/dictionary.sqlite3`:
 YOMIKATA_DATABASE_PATH=/path/to/dictionary.sqlite3 uv run yomikata
 ```
 
-By default the popup appears whenever the pointer settles over Japanese
-text. To require holding a modifier key first (so it doesn't pop up on
-every word you pass over while reading), set `YOMIKATA_HOVER_MODIFIER` to
-`ctrl`, `alt`, or `shift`:
+By default the popup only appears while Ctrl is held, so it doesn't pop up
+over Japanese text any time the pointer drifts near it during normal desktop
+use -- unlike a browser extension, this polls the pointer across every app,
+not just a page you're actively reading. Set `YOMIKATA_HOVER_MODIFIER` to
+`alt` or `shift` to use a different key, or to `none` to show the popup on
+plain hover with no modifier:
 
 ```bash
-YOMIKATA_HOVER_MODIFIER=ctrl uv run yomikata
+YOMIKATA_HOVER_MODIFIER=none uv run yomikata
 ```
 
 ### Troubleshooting

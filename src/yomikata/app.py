@@ -40,21 +40,24 @@ def _database_path() -> Path:
 def _hover_modifier_source() -> XlibModifierKeySource | None:
     """Build the modifier key source configured via YOMIKATA_HOVER_MODIFIER.
 
-    Accepts "ctrl", "alt", or "shift" (case-insensitive); unset or "none"
-    disables the requirement, matching the previous always-on hover
-    behavior. An unrecognized value is logged and treated as "none".
+    Accepts "ctrl", "alt", or "shift" (case-insensitive); defaults to
+    "ctrl" since polling the pointer system-wide (unlike a browser
+    extension scoped to one tab) would otherwise pop up over Japanese
+    text any time the pointer drifts near it during normal desktop use.
+    Set to "none" to require no modifier. An unrecognized value is logged
+    and treated as "ctrl".
     """
-    name = os.environ.get("YOMIKATA_HOVER_MODIFIER", "none").strip().lower()
+    name = os.environ.get("YOMIKATA_HOVER_MODIFIER", "ctrl").strip().lower()
     if name == "none" or not name:
         return None
     mask = MODIFIER_MASKS.get(name)
     if mask is None:
         logger.warning(
-            "Unrecognized YOMIKATA_HOVER_MODIFIER=%r, ignoring. Valid values: %s, none",
+            "Unrecognized YOMIKATA_HOVER_MODIFIER=%r, falling back to ctrl. Valid values: %s, none",
             name,
             ", ".join(MODIFIER_MASKS),
         )
-        return None
+        mask = MODIFIER_MASKS["ctrl"]
     return XlibModifierKeySource(mask)
 
 
@@ -102,6 +105,7 @@ def main() -> None:
         modifier_source=modifier_source,
     )
     hover_monitor.add_listener(pipeline.on_hover)
+    hover_monitor.add_end_listener(popup.hide)
 
     def poll_tick() -> bool:
         hover_monitor.poll_once()

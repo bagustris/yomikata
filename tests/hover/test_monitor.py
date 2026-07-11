@@ -270,3 +270,74 @@ def test_modifier_source_exception_does_not_propagate() -> None:
     )
 
     assert monitor.poll_once() is None
+
+
+def test_releasing_modifier_notifies_end_listeners_once() -> None:
+    clock = FakeClock()
+    modifier = FakeModifierSource(active=True)
+    monitor = HoverMonitor(
+        pointer_source=FakePointerSource(iter([(100, 100), (100, 100), (100, 100)])),
+        clock=clock,
+        modifier_source=modifier,
+    )
+    ends: list[None] = []
+    monitor.add_end_listener(lambda: ends.append(None))
+
+    monitor.poll_once()
+    modifier.active = False
+    monitor.poll_once()
+    monitor.poll_once()
+
+    assert len(ends) == 1
+
+
+def test_removed_end_listener_is_not_notified() -> None:
+    clock = FakeClock()
+    modifier = FakeModifierSource(active=True)
+    monitor = HoverMonitor(
+        pointer_source=FakePointerSource(iter([(100, 100), (100, 100)])),
+        clock=clock,
+        modifier_source=modifier,
+    )
+    ends: list[None] = []
+    listener = lambda: ends.append(None)  # noqa: E731
+    monitor.add_end_listener(listener)
+    monitor.remove_end_listener(listener)
+
+    monitor.poll_once()
+    modifier.active = False
+    monitor.poll_once()
+
+    assert ends == []
+
+
+def test_end_listener_not_notified_when_no_modifier_configured() -> None:
+    clock = FakeClock()
+    monitor = make_monitor([(100, 100), (100, 100)], clock)
+    ends: list[None] = []
+    monitor.add_end_listener(lambda: ends.append(None))
+
+    monitor.poll_once()
+    clock.advance(0.2)
+    monitor.poll_once()
+
+    assert ends == []
+
+
+def test_end_listener_exception_does_not_propagate() -> None:
+    clock = FakeClock()
+    modifier = FakeModifierSource(active=True)
+    monitor = HoverMonitor(
+        pointer_source=FakePointerSource(iter([(100, 100)])),
+        clock=clock,
+        modifier_source=modifier,
+    )
+
+    def failing_listener() -> None:
+        raise RuntimeError("popup unavailable")
+
+    monitor.add_end_listener(failing_listener)
+
+    monitor.poll_once()
+    modifier.active = False
+    monitor.poll_once()
