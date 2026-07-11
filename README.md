@@ -81,6 +81,37 @@ This starts the GLib main loop, polls the pointer every 30ms via AT-SPI, and
 shows a popup when it settles over Japanese text in a supported application
 (see PLAN.md's Scope section). Stop it with Ctrl+C.
 
+### Wayland sessions (the Ubuntu/GNOME default)
+
+YomiKata itself runs fine in a Wayland session, but it can only read text
+from applications running under **XWayland**. A native Wayland client never
+learns where the compositor placed its window, so it reports accessible
+coordinates relative to its own surface; hit-testing those against the
+global pointer position can never match, and hovering silently does
+nothing.
+
+Launch target applications with the X11 backend instead:
+
+```bash
+GDK_BACKEND=x11 evince file.pdf
+GDK_BACKEND=x11 gedit notes.txt
+```
+
+A shell alias makes this painless:
+
+```bash
+alias evince='GDK_BACKEND=x11 evince'
+```
+
+YomiKata detects the situation for you: it logs an informational note at
+startup when it finds itself in a Wayland session, and logs a warning
+naming the offending window the first time you hover over an application
+whose reported position reveals it is running as a native Wayland client.
+
+Reading native-Wayland windows directly would require compositor
+cooperation (e.g. a GNOME Shell extension exposing pointer and window
+geometry); that is a possible future backend, not a current feature.
+
 To use a database built somewhere else, set `YOMIKATA_DATABASE_PATH` instead
 of relying on the default `database/dictionary.sqlite3`:
 
@@ -122,11 +153,10 @@ verified empirically on GNOME 46/Wayland:
   Apps that were already running when it was turned on never register with
   AT-SPI -- restart them.
 - The target application must run under XWayland, not native Wayland
-  (`GDK_BACKEND=x11` for GTK apps). Wayland hides global window positions
-  from clients, so native-Wayland windows report AT-SPI coordinates
-  relative to (0, 0) and hit-testing against the global pointer position
-  can never match. This mirrors the XWayland requirement the popup and
-  pointer source already have.
+  (`GDK_BACKEND=x11` for GTK apps) -- see the "Wayland sessions" section
+  above. YomiKata logs a warning naming the window when it detects this
+  case, so check its output first. This mirrors the XWayland requirement
+  the popup and pointer source already have.
 - GTK4 applications (e.g. GNOME Text Editor, which is *not* gedit) do not
   work at all, even under XWayland: GTK4's accessibility bridge does not
   implement the coordinate-based text queries

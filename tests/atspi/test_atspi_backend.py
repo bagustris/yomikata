@@ -7,6 +7,10 @@ and text-extraction logic without a running AT-SPI bus.
 
 from __future__ import annotations
 
+import logging
+
+import pytest
+
 from yomikata.atspi.extractor import AccessibleTextInfo, AtspiAccessibilityBackend
 
 
@@ -55,6 +59,9 @@ class FakeAccessible:
     def get_state_set(self) -> FakeStateSet:
         return FakeStateSet(self._active)
 
+    def get_name(self) -> str:
+        return self.name
+
 
 class FakeComponentNamespace:
     @staticmethod
@@ -62,6 +69,10 @@ class FakeComponentNamespace:
         return component.x <= x < component.x + component.width and (
             component.y <= y < component.y + component.height
         )
+
+    @staticmethod
+    def get_extents(component: FakeComponent, coord_type: str) -> FakeComponent:
+        return component
 
 
 class FakeTextNamespace:
@@ -195,6 +206,79 @@ def test_logs_but_does_not_raise_when_init_returns_nonzero() -> None:
     backend = AtspiAccessibilityBackend(atspi_module=FakeAtspiModule(desktop, init_result=1))
 
     assert backend.get_text_at_point(0, 0) is None
+
+
+def _wayland_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if "native Wayland" in record.getMessage()]
+
+
+def make_backend_with_empty_active_frame(
+    frame_x: int, frame_y: int, wayland_session: bool
+) -> AtspiAccessibilityBackend:
+    active_frame = FakeAccessible(
+        name="frame",
+        component=FakeComponent(frame_x, frame_y, 100, 100),
+        children=[],
+        active=True,
+    )
+    app = FakeAccessible(name="app", children=[active_frame])
+    return AtspiAccessibilityBackend(
+        atspi_module=FakeAtspiModule(make_desktop([app])), wayland_session=wayland_session
+    )
+
+
+def test_warns_once_when_wayland_frame_at_origin_yields_no_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    backend = make_backend_with_empty_active_frame(0, 0, wayland_session=True)
+
+    with caplog.at_level(logging.WARNING, logger="yomikata.atspi.extractor"):
+        assert backend.get_text_at_point(10, 10) is None
+        assert backend.get_text_at_point(10, 10) is None
+
+    assert len(_wayland_warnings(caplog)) == 1
+
+
+def test_does_not_warn_outside_a_wayland_session(caplog: pytest.LogCaptureFixture) -> None:
+    backend = make_backend_with_empty_active_frame(0, 0, wayland_session=False)
+
+    with caplog.at_level(logging.WARNING, logger="yomikata.atspi.extractor"):
+        assert backend.get_text_at_point(10, 10) is None
+
+    assert _wayland_warnings(caplog) == []
+
+
+def test_does_not_warn_when_frame_reports_a_real_position(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A frame whose extents have a non-zero origin knows its true screen
+    # position (i.e. it runs under XWayland), so a missed hit is just a
+    # missed hit, not the hidden-position failure mode.
+    backend = make_backend_with_empty_active_frame(28, 67, wayland_session=True)
+
+    with caplog.at_level(logging.WARNING, logger="yomikata.atspi.extractor"):
+        assert backend.get_text_at_point(200, 200) is None
+
+    assert _wayland_warnings(caplog) == []
+
+
+def test_does_not_warn_when_extraction_succeeds(caplog: pytest.LogCaptureFixture) -> None:
+    label = FakeAccessible(name="label", component=FakeComponent(0, 0, 50, 20), text="東京に行く")
+    active_frame = FakeAccessible(
+        name="frame",
+        component=FakeComponent(0, 0, 100, 100),
+        children=[label],
+        active=True,
+    )
+    app = FakeAccessible(name="app", children=[active_frame])
+    backend = AtspiAccessibilityBackend(
+        atspi_module=FakeAtspiModule(make_desktop([app])), wayland_session=True
+    )
+
+    with caplog.at_level(logging.WARNING, logger="yomikata.atspi.extractor"):
+        assert backend.get_text_at_point(10, 10) is not None
+
+    assert _wayland_warnings(caplog) == []
 
 
 def test_probes_descendants_when_text_object_reports_unusable_extents() -> None:

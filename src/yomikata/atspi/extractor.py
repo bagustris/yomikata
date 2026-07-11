@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from yomikata.atspi.cursor import AccessibleLike, ComponentLike, locate_accessible_at_point
+from yomikata.util.session import is_wayland_session
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +73,19 @@ class AccessibilityExtractor:
 class AtspiAccessibilityBackend:
     """Reads accessible text via the AT-SPI D-Bus service (gi.repository.Atspi)."""
 
-    def __init__(self, atspi_module: Any | None = None) -> None:
+    def __init__(
+        self, atspi_module: Any | None = None, wayland_session: bool | None = None
+    ) -> None:
         """Initialize the backend.
 
         Args:
             atspi_module: The ``Atspi`` GI module to use. Defaults to the
                 real ``gi.repository.Atspi``; injectable so tests can
                 supply a fake without a running AT-SPI bus.
+            wayland_session: Whether the desktop session is Wayland, which
+                enables the native-Wayland-client diagnostic emitted when
+                extraction fails. Defaults to detecting it from the
+                environment; injectable so tests are deterministic.
         """
         if atspi_module is None:
             import gi
@@ -89,6 +96,10 @@ class AtspiAccessibilityBackend:
             atspi_module = Atspi
 
         self._atspi = atspi_module
+        self._wayland_session = (
+            is_wayland_session() if wayland_session is None else wayland_session
+        )
+        self._warned_wayland_frames: set[str] = set()
         init_result = atspi_module.init()
         if init_result != 0:
             logger.warning("Atspi.init() returned non-zero status: %s", init_result)
@@ -108,14 +119,58 @@ class AtspiAccessibilityBackend:
 
         root = _AtspiAccessibleAdapter(active_frame, atspi.CoordType.SCREEN, atspi)
         hit = locate_accessible_at_point(root, x, y)
-        if not isinstance(hit, _AtspiAccessibleAdapter):
-            return None
 
-        info = self._read_text(hit.accessible, x, y)
-        if info is not None:
-            return info
+        info: AccessibleTextInfo | None = None
+        if isinstance(hit, _AtspiAccessibleAdapter):
+            info = self._read_text(hit.accessible, x, y)
+            if info is None:
+                info = self._probe_descendants_for_text(hit.accessible, x, y)
 
-        return self._probe_descendants_for_text(hit.accessible, x, y)
+        if info is None:
+            self._warn_if_frame_hides_its_position(active_frame)
+        return info
+
+    def _warn_if_frame_hides_its_position(self, frame: Any) -> None:
+        """Diagnose the native-Wayland silent failure mode after a missed hit.
+
+        A native Wayland client never learns where the compositor placed
+        its window, so it reports AT-SPI extents relative to its own
+        surface: the frame claims to sit at (0, 0) regardless of its real
+        screen position (verified empirically against Wayland Evince), and
+        hit-testing it against the global pointer position can never line
+        up. To the rest of the pipeline that is indistinguishable from
+        "no text under the pointer", which makes the app silently do
+        nothing -- so name the likely culprit and the fix once per frame,
+        rather than staying quiet or re-logging on every poll.
+        """
+        if not self._wayland_session:
+            return
+
+        try:
+            component = frame.get_component_iface()
+            if component is None:
+                return
+            extents = self._atspi.Component.get_extents(
+                component, self._atspi.CoordType.SCREEN
+            )
+            if extents.x != 0 or extents.y != 0:
+                return
+            frame_name = str(frame.get_name() or "")
+        except Exception:
+            logger.debug("Failed to inspect the active frame's extents", exc_info=True)
+            return
+
+        if frame_name in self._warned_wayland_frames:
+            return
+        self._warned_wayland_frames.add(frame_name)
+        logger.warning(
+            "Active window %r reports its screen position as (0, 0); on a Wayland "
+            "session this usually means it runs as a native Wayland client, whose "
+            "real window position is hidden from accessibility clients, so hovered "
+            "text cannot be located. Relaunch it under XWayland instead, e.g. "
+            "GDK_BACKEND=x11 evince file.pdf. See README.md's Wayland section.",
+            frame_name,
+        )
 
     def _probe_descendants_for_text(
         self, accessible: Any, x: int, y: int

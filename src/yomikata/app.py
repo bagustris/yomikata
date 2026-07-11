@@ -23,6 +23,7 @@ from yomikata.pipeline import HoverPipeline
 from yomikata.popup.window import PopupWindow
 from yomikata.tokenizer.sudachi import SudachiTokenizer
 from yomikata.util.logging import configure_logging
+from yomikata.util.session import is_wayland_session
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,13 @@ def main() -> None:
     """Start the YomiKata application."""
     configure_logging()
     logger.info("YomiKata starting up")
+
+    if is_wayland_session():
+        logger.info(
+            "Wayland session detected. YomiKata reads text only from applications "
+            "running under XWayland; launch target apps with GDK_BACKEND=x11 "
+            "(e.g. GDK_BACKEND=x11 evince file.pdf). See README.md's Wayland section."
+        )
 
     database_path = _database_path()
     if not database_path.exists():
