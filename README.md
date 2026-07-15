@@ -35,6 +35,26 @@ Early development. See [PLAN.md](PLAN.md) for the project roadmap and architectu
   itself as an X11 override-redirect window instead. See
   `src/yomikata/popup/window.py` for details.
 
+- GTK/GNOME accessibility must be turned on:
+
+  ```bash
+  gsettings set org.gnome.desktop.interface toolkit-accessibility true
+  ```
+
+  GNOME ships this **off** by default until something (usually Orca) turns
+  it on. With it off, GTK apps still register on the AT-SPI bus and expose
+  their window chrome (panels, buttons, toolbars), which makes it easy to
+  believe accessibility is working -- but they never populate the
+  `Text`-interface objects that hold actual document/editor content, so
+  every hover silently finds nothing. Confirmed empirically: Evince exposed
+  its page as a childless, textless `icon` object with this setting off,
+  and as a `page` object with a full `Text` interface once it was on;
+  GNOME Text Editor's `GtkTextView` was missing from its accessible tree
+  entirely until the setting was flipped. It's a `dconf` setting, so it
+  persists across reboots once set -- this only needs to be done once, and
+  only takes effect for applications launched (or restarted) after it's
+  set.
+
 ## Development
 
 ```bash
@@ -50,34 +70,30 @@ uv run mypy src
 
 The app needs a dictionary database before it will start; it refuses to run
 without one (see `main()` in `src/yomikata/app.py`). Build one from the
-public JMdict and KANJIDIC2 source files:
+public JMdict and KANJIDIC2 source files with the built-in command:
 
 ```bash
-curl -o /tmp/JMdict_e.gz http://ftp.edrdg.org/pub/Nihongo/JMdict_e.gz
-curl -o /tmp/kanjidic2.xml.gz http://ftp.edrdg.org/pub/Nihongo/kanjidic2.xml.gz
-gunzip -k /tmp/JMdict_e.gz /tmp/kanjidic2.xml.gz
-
-uv run python -c "
-from pathlib import Path
-from yomikata.dictionary.jmdict import build_dictionary_database
-from yomikata.dictionary.kanjidic import build_kanji_database
-
-db = Path('database/dictionary.sqlite3')
-build_dictionary_database(Path('/tmp/JMdict_e'), db)
-build_kanji_database(Path('/tmp/kanjidic2.xml'), db)
-"
+uv run yomikata --build-dict
 ```
 
-`build_dictionary_database` must run first -- it recreates the database file
-from scratch. `build_kanji_database` then adds KANJIDIC2 data into the same
-file without wiping it. This only needs to be done once; re-run it later to
-pick up updated dictionary data.
+This downloads `JMdict_e.gz` and `kanjidic2.xml.gz` from
+[ftp.edrdg.org](http://ftp.edrdg.org/pub/Nihongo/), decompresses them in
+memory, and writes `database/dictionary.sqlite3` (or
+`$YOMIKATA_DATABASE_PATH` if set). It overwrites any existing database. This
+only needs to be done once; re-run it later to pick up updated dictionary
+data. See `yomikata.dictionary.setup.download_and_build` if you'd rather
+call it from Python directly, or `yomikata.dictionary.jmdict` /
+`yomikata.dictionary.kanjidic` to build from already-downloaded XML files.
 
 Then run the app itself:
 
 ```bash
 uv run yomikata
 ```
+
+If the database is still missing at this point and you're at an interactive
+terminal, it will ask whether to download and build it now instead of
+failing outright.
 
 This starts the GLib main loop, polls the pointer every 30ms via AT-SPI, and
 shows a popup when it settles over Japanese text in a supported application
@@ -101,8 +117,44 @@ GDK_BACKEND=x11 gedit notes.txt
 
 A shell alias makes this painless for apps you launch from a terminal, but it
 won't cover apps launched from the dock, Activities search, or a file
-manager double-click. For those, set the backend for your whole GNOME
-session instead:
+manager double-click, since those go through the app's `.desktop` file
+(`Exec=evince %U`) instead of your shell.
+
+**Recommended: per-app wrapper scripts in `~/.local/bin`.** `systemd --user`
+(and therefore GNOME Shell, Nautilus, and the dock) resolves an unqualified
+`Exec=` command by searching `PATH`, and `~/.local/bin` is first on that
+`PATH` by default -- check with `systemctl --user show-environment | grep
+PATH`. A same-named script placed there is picked up for every launch route
+(terminal, dock, Activities, file manager) without changing the environment
+of anything else:
+
+```bash
+mkdir -p ~/.local/bin
+for app in evince gnome-text-editor libreoffice gedit; do
+  command -v "$app" >/dev/null 2>&1 || continue
+  real_path="$(command -v "$app")"
+  cat > "$HOME/.local/bin/$app" <<EOF
+#!/bin/sh
+exec env GDK_BACKEND=x11 $real_path "\$@"
+EOF
+  chmod +x "$HOME/.local/bin/$app"
+done
+```
+
+Note the wrapper calls the *absolute* path of the real binary, not its own
+name again -- otherwise it would recurse into itself. Only the wrapped apps
+run under XWayland; GNOME Shell and every other GTK app you haven't wrapped
+keep running natively on Wayland, so there's no session-wide slowdown.
+
+This doesn't work for apps whose `.desktop` file already `Exec`s an absolute
+path (common for Flatpak/Snap packages), since that bypasses `PATH` lookup
+entirely. For those, copy the `.desktop` file into
+`~/.local/share/applications/` (it takes priority over the one in
+`/usr/share/applications/` for the same desktop ID) and prefix its `Exec=`
+line with `env GDK_BACKEND=x11`.
+
+If you want XWayland for genuinely everything instead, you can still set the
+backend for your whole GNOME session:
 
 ```bash
 mkdir -p ~/.config/environment.d
@@ -111,17 +163,14 @@ echo 'GDK_BACKEND=x11' >> ~/.config/environment.d/gdk-backend.conf
 
 `environment.d` is read by `systemd --user` when it starts your session, so
 this takes effect the next time you log in -- log out and back in (a full
-reboot isn't necessary). It applies to every GTK app you launch afterward,
-however you launch it. The trade-off is session-wide: all GTK apps run
+reboot isn't necessary). The trade-off is session-wide: all GTK apps run
 under XWayland, not just the ones you hover over, so you lose Wayland-only
 behavior (e.g. fractional scaling smoothness) everywhere, not just in your
-target app.
-
-In practice this can read as a general slowdown, not just a cosmetic loss:
-XWayland's compatibility layer adds overhead versus native Wayland, so GNOME
-Shell and every GTK app you launch -- not just target apps -- can feel less
-responsive for as long as the file is in place. Prefer the per-app alias
-above; reserve the session-wide `environment.d` file for active testing and
+target app. In practice this can read as a general slowdown, not just a
+cosmetic loss: XWayland's compatibility layer adds overhead versus native
+Wayland, so GNOME Shell and every GTK app you launch -- not just target
+apps -- can feel less responsive for as long as the file is in place. Prefer
+the wrapper-script approach above; reserve this for active testing and
 remove it again afterward. There is no way to undo it without logging out
 again either: `environment.d` is only read when `systemd --user` (and
 therefore GNOME Shell) starts, so `systemctl --user unset-environment
@@ -130,9 +179,9 @@ point on -- it cannot retroactively change GNOME Shell's own environment or
 anything already forked from it.
 
 On Ubuntu 26.04+, GNOME dropped the "GNOME on Xorg" login option entirely
--- Wayland is the only GNOME session available, so `environment.d` (or the
-per-app alias/env var above) is the only way to get a target app onto
-XWayland; there is no longer a full-Xorg-session escape hatch.
+-- Wayland is the only GNOME session available, so one of the approaches
+above is the only way to get a target app onto XWayland; there is no longer
+a full-Xorg-session escape hatch.
 
 YomiKata detects the situation for you: it logs an informational note at
 startup when it finds itself in a Wayland session, and logs a warning

@@ -40,6 +40,20 @@ def _database_path() -> Path:
     return Path(override) if override else _DEFAULT_DATABASE_PATH
 
 
+def _prompt_build_dictionary(database_path: Path) -> bool:
+    """Ask the user whether to download and build the missing dictionary now.
+
+    Only meaningful when stdin is a terminal; callers should check
+    ``sys.stdin.isatty()`` first so a headless launch (e.g. autostart)
+    never blocks on input.
+    """
+    response = input(
+        f"Dictionary database not found at {database_path}. "
+        "Download JMdict/KANJIDIC2 and build it now? [y/N] "
+    )
+    return response.strip().lower() in ("y", "yes")
+
+
 def _hover_modifier_source(settings: Settings) -> XlibModifierKeySource | None:
     """Build the modifier key source for the given settings.
 
@@ -65,6 +79,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Open the settings window instead of starting the hover dictionary.",
     )
+    parser.add_argument(
+        "--build-dict",
+        action="store_true",
+        help="Download JMdict/KANJIDIC2 and build the dictionary database, then exit.",
+    )
     return parser.parse_args(argv)
 
 
@@ -79,6 +98,14 @@ def main() -> None:
         run_settings_window()
         return
 
+    database_path = _database_path()
+
+    if args.build_dict:
+        from yomikata.dictionary.setup import download_and_build
+
+        download_and_build(database_path)
+        return
+
     logger.info("YomiKata starting up")
 
     if is_wayland_session():
@@ -88,16 +115,19 @@ def main() -> None:
             "(e.g. GDK_BACKEND=x11 evince file.pdf). See README.md's Wayland section."
         )
 
-    database_path = _database_path()
     if not database_path.exists():
-        logger.error(
-            "Dictionary database not found at %s. Build one with "
-            "yomikata.dictionary.jmdict.build_dictionary_database and "
-            "yomikata.dictionary.kanjidic.build_kanji_database, or set "
-            "YOMIKATA_DATABASE_PATH. See README.md.",
-            database_path,
-        )
-        return
+        if sys.stdin.isatty() and _prompt_build_dictionary(database_path):
+            from yomikata.dictionary.setup import download_and_build
+
+            download_and_build(database_path)
+        else:
+            logger.error(
+                "Dictionary database not found at %s. Build one with "
+                "`uv run yomikata --build-dict`, or set YOMIKATA_DATABASE_PATH. "
+                "See README.md.",
+                database_path,
+            )
+            return
 
     settings = load_settings()
     accessibility_extractor = AccessibilityExtractor()
